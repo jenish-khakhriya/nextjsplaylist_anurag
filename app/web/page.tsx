@@ -31,6 +31,9 @@ export default function Web() {
          <Link href={"/design"} className="py-2 px-4 bg-blue-500 text-white rounded hover:bg-blue-600">
           Go to design
         </Link>
+         <Link href={"/blog"} className="py-2 px-4 bg-blue-500 text-white rounded hover:bg-blue-600">
+          Go to Blog
+        </Link>
       </div>
 
        <div className="w-full border border-red-700 flex gap-5 shrink-0 items-center">
