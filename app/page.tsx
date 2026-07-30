@@ -8,11 +8,11 @@ export default function Home() {
           Home page
         </div>
         {/* see in react router dom we want to do "TO" attribute but in next js its "href"  */}
-        <Link href={"/about"} className="py-2 px-4 bg-blue-500 text-white rounded hover:bg-blue-600">
-          Go to About
+        <Link href={"/web"} className="py-2 px-4 bg-blue-500 text-white rounded hover:bg-blue-600">
+          Go to Web
         </Link>
-         <Link href={"/services"} className="py-2 px-4 bg-blue-500 text-white rounded hover:bg-blue-600">
-          Go to Services
+         <Link href={"/design"} className="py-2 px-4 bg-blue-500 text-white rounded hover:bg-blue-600">
+          Go to Design
         </Link>
       </div>
     </div>
