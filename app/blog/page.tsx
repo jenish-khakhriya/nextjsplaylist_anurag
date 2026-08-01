@@ -1,4 +1,13 @@
 import Link from "next/link";
+import {Metadata} from "next";
+
+// see its set metadata and in loayout meta just like title -> "Blog | Next js" and description -> "This is blog page"
+export const metadata : Metadata = {
+    title : "Blog",
+    description : "This is blog page"
+}
+
+
 
 export default function Blog() {
     return (

@@ -1,6 +1,14 @@
 import Link from "next/dist/client/link";
+// see in dynamic we can set metadata and in root layout we can set templete so 'params - Blog | next js' like set and also dynamic meta data we can set in generateMetadata function and also we can get query parameter from searchParams object
+export async function generateMetadata({params} : {params : Promise<{blog : string}>}){
+  const {blog} = await params;
+  return {
+    title : `${blog} - Blog`,
+    description : `This is ${blog} page`
+  }
+}
 
-export default async function Blog({params,searchParams} : {params : {blog : string}, searchParams : {q : string}}) {
+export default async function Blog({params,searchParams} : {params : {blog : string}, searchParams : {[key : string] : string | string[] | undefined}}) {
     const {blog} = await params;
   const {q} = await searchParams;
     console.log("blog", blog); // its a dynamic route parameter we can get it from params object
