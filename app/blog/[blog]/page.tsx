@@ -1,10 +1,15 @@
 import Link from "next/dist/client/link";
+import { notFound } from "next/navigation";
 
 export default async function Blog({params,searchParams} : {params : {blog : string}, searchParams : {q : string}}) {
     const {blog} = await params;
   const {q} = await searchParams;
     console.log("blog", blog); // its a dynamic route parameter we can get it from params object
     console.log("q", q); // its a query parameter we can get it from searchParams object
+
+    if(!/^[0-9]+$/.test(blog)){
+      return notFound();
+    }
 
   return (
     
