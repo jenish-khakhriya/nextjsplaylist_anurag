@@ -1,7 +1,8 @@
 import Link from "next/link";
 
-const Blogs = () => {
-  console.log('Blogs page rendered');
+const Blogs = async () => {
+  const response = await fetch("https://6911c0827686c0e9c20edfce.mockapi.io/api/login/getUserData");
+  const data = await response.json();
   return (
     <>
       <nav>
@@ -31,15 +32,12 @@ const Blogs = () => {
       <div>
         <h1>Welcome to Our Blog</h1>
         <ol className="blog-links">
-          <li>
-            <Link href="/blogs/1">Blog 1</Link>
+        
+          {data?.slice(0,10).map((item) => {
+            return <li>
+            <Link href={`/blogs/${item?.id ?? 1}`}>{item?.fullName}</Link>
           </li>
-          <li>
-            <Link href="/blogs/2">Blog 2</Link>
-          </li>
-          <li>
-            <Link href="/blogs/3">Blog 3</Link>
-          </li>
+          })}
         </ol>
       </div>
     </>

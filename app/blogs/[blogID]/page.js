@@ -1,8 +1,20 @@
 import Link from "next/link";
 
+export async function generateStaticParams(){
+  const response = await fetch("https://6911c0827686c0e9c20edfce.mockapi.io/api/login/getUserData");
+  const data = await response.json();
+
+  return data?.slice(0,10).map((item) => ({
+    blogID: item?.id ?? 1
+  }));
+
+}
+
 const Blogs = async ({ params }) => {
   const { blogID } = await params;
-  console.log(blogID);
+   const response = await fetch(`https://6911c0827686c0e9c20edfce.mockapi.io/api/login/getUserData/${blogID}`);
+   const data = await response.json();
+   console.log(data?.id)
   return (
     <>
       <nav>
@@ -32,6 +44,11 @@ const Blogs = async ({ params }) => {
       <div>
         <h1>Welcome to Our Blog {blogID}</h1>
         <p>This is blog {blogID} page.</p>
+        {Object.entries(data).map(([key, value]) => (
+          <div key={key}>
+            <strong>{key}:</strong> {String(value)}
+          </div>
+        ))}
       </div>
     </>
   );
