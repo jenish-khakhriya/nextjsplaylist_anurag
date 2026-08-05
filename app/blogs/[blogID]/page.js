@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-export const dynamicParams = false;
+// export const dynamicParams = false;
+export const revalidate = 25;
 
 export async function generateStaticParams(){
   const response = await fetch("https://6911c0827686c0e9c20edfce.mockapi.io/api/login/getUserData");
@@ -51,6 +52,7 @@ const Blogs = async ({ params }) => {
             <strong>{key}:</strong> {String(value)}
           </div>
         ))}
+        <div>date : {new Date().toLocaleTimeString()}</div>
       </div>
     </>
   );
