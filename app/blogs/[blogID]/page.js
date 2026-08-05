@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+export const dynamicParams = false;
+
 export async function generateStaticParams(){
   const response = await fetch("https://6911c0827686c0e9c20edfce.mockapi.io/api/login/getUserData");
   const data = await response.json();
