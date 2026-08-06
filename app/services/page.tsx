@@ -2,6 +2,10 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 
 // export const dynamic = "force-dynamic";
+// export const dynamic = "force-static";
+export const dynamic = "error";
+
+
 
 const Services = async ({searchParams} : {searchParams : {[key : string] : string}}) => {
   const myCookies = await cookies();
