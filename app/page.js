@@ -24,6 +24,9 @@ const Home = () => {
             <Link href="/blogs" className="nav-link">
               Blogs
             </Link>
+            <Link href="/suspense" className="nav-link">
+              Suspense
+            </Link>
           </li>
         </ul>
       </nav>
