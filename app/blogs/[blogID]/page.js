@@ -1,17 +1,19 @@
 import Link from "next/link";
 
 // export const dynamicParams = false;
+
+//ISR
 // export const revalidate = 25;
 
-export async function generateStaticParams(){
-  const response = await fetch("https://6911c0827686c0e9c20edfce.mockapi.io/api/login/getUserData");
-  const data = await response.json();
 
-  return data?.slice(0,10).map((item) => ({
-    blogID: item?.id ?? 1
-  }));
-
-}
+//SSG
+// export async function generateStaticParams(){
+//   const response = await fetch("https://6911c0827686c0e9c20edfce.mockapi.io/api/login/getUserData");
+//   const data = await response.json();
+//   return data?.slice(0,10).map((item) => ({
+//     blogID: item?.id ?? 1
+//   }));
+// }
 
 const Blogs = async ({ params }) => {
   const { blogID } = await params;

@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+export const dynamic = "force-dynamic";
+
 const Services = () => {
   console.log("services page rendered");
   return (
