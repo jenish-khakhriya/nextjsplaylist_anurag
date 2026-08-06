@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 // export const dynamicParams = false;
-export const revalidate = 25;
+// export const revalidate = 25;
 
 export async function generateStaticParams(){
   const response = await fetch("https://6911c0827686c0e9c20edfce.mockapi.io/api/login/getUserData");
@@ -15,7 +15,11 @@ export async function generateStaticParams(){
 
 const Blogs = async ({ params }) => {
   const { blogID } = await params;
-   const response = await fetch(`https://6911c0827686c0e9c20edfce.mockapi.io/api/login/getUserData/${blogID}`);
+   const response = await fetch(`https://6911c0827686c0e9c20edfce.mockapi.io/api/login/getUserData/${blogID}`,{
+    next: {
+      revalidate: 25
+    }
+   });
    const data = await response.json();
    console.log(data?.id)
   return (
