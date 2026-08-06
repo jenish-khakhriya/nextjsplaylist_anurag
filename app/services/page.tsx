@@ -1,9 +1,11 @@
+import { cookies } from "next/headers";
 import Link from "next/link";
 
-export const dynamic = "force-dynamic";
+// export const dynamic = "force-dynamic";
 
-const Services = () => {
-  console.log("services page rendered");
+const Services = async ({searchParams} : {searchParams : {[key : string] : string}}) => {
+  const myCookies = await cookies();
+  console.log("services page rendered",myCookies);
   return (
     <>
       <nav>
