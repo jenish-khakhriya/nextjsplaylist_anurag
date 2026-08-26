@@ -1,8 +1,16 @@
-export default async function Like() {
-    await new Promise((resolve) => setTimeout(resolve, 10000));
+
+
+import { useState } from "react";
+
+export default function Like() {
+    const [likeCount, setLikeCount] = useState(0);
+  console.log("like component rendered");
+    
   return (
-    <div>
-      <h1>2k Like Page</h1>
+    <div onClick={() => {
+        setLikeCount(prev => prev + 1);
+    }}>
+      <p>Like Count: {likeCount}</p>
     </div>
   );
 }
