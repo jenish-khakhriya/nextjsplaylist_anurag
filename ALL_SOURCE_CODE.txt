@@ -1,0 +1,2808 @@
+================================================================================
+  BlogApp — Complete Next.js Frontend Source Code
+  Next.js 16 | React 19 | TypeScript | Tailwind CSS 4 | Axios | Formik | Yup
+================================================================================
+
+
+// ============================================================
+//!  next.config.ts
+// ============================================================
+
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  images: {
+    // Next.js 16 requires qualities to be explicitly set
+    qualities: [25, 50, 75, 100],
+    remotePatterns: [
+      // ui-avatars.com — fallback avatar generator
+      {
+        protocol: "https",
+        hostname: "ui-avatars.com",
+        pathname: "/api/**",
+      },
+      // Unsplash — default blog images
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
+      },
+      // Allow any http/https hostname for user-supplied profile image
+      // and blog image URLs coming from the database.
+      // In production, restrict these to your own CDN/storage bucket.
+      {
+        protocol: "https",
+        hostname: "**",
+      },
+      {
+        protocol: "http",
+        hostname: "**",
+      },
+    ],
+  },
+};
+
+export default nextConfig;
+
+
+// ============================================================
+//!  .env.local  /  .env.example
+// ============================================================
+
+NEXT_PUBLIC_API_URL=http://localhost:5000/api
+
+
+// ============================================================
+//!  src/types/auth.ts
+// ============================================================
+
+export interface LoginPayload {
+  email: string;
+  password: string;
+}
+
+export interface RegisterPayload {
+  name: string;
+  email: string;
+  password: string;
+  profileImage?: string;
+}
+
+export interface ApiResponse<T = unknown> {
+  success: boolean;
+  message: string;
+  data?: T;
+}
+
+
+// ============================================================
+//!  src/types/user.ts
+// ============================================================
+
+export interface User {
+  _id: string;
+  name: string;
+  email: string;
+  profileImage?: string;
+  role: "user" | "admin";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpdateProfilePayload {
+  name?: string;
+  email?: string;
+  profileImage?: string;
+}
+
+export interface ChangePasswordPayload {
+  oldPassword: string;
+  newPassword: string;
+}
+
+
+// ============================================================
+//!  src/types/blog.ts
+// ============================================================
+
+import { User } from "./user";
+
+export interface Blog {
+  _id: string;
+  title: string;
+  content: string;
+  image?: string;
+  author: User;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateBlogPayload {
+  title: string;
+  content: string;
+  image?: string;
+}
+
+export interface UpdateBlogPayload {
+  title?: string;
+  content?: string;
+  image?: string;
+}
+
+
+// ============================================================
+//!  src/utils/constants.ts
+// ============================================================
+
+export const API_URL = process.env.NEXT_PUBLIC_API_URL as string;
+
+export const ROUTES = {
+  HOME: "/",
+  LOGIN: "/login",
+  REGISTER: "/register",
+  BLOGS: "/blogs",
+  BLOG_CREATE: "/blogs/create",
+  BLOG_DETAIL: (id: string) => `/blogs/${id}`,
+  BLOG_EDIT: (id: string) => `/blogs/edit/${id}`,
+  PROFILE: "/profile",
+  PROFILE_EDIT: "/profile/edit",
+  PROFILE_CHANGE_PASSWORD: "/profile/change-password",
+  ADMIN: "/admin",
+  ADMIN_USERS: "/admin/users",
+  ADMIN_USER_DETAIL: (id: string) => `/admin/users/${id}`,
+  UNAUTHORIZED: "/unauthorized",
+} as const;
+
+export const DEFAULT_AVATAR = "https://ui-avatars.com/api/?background=6366f1&color=fff&bold=true";
+export const DEFAULT_BLOG_IMAGE = "https://images.unsplash.com/photo-1499750310107-5fef28a66643?w=800&q=75";
+
+export const ROLES = {
+  USER: "user",
+  ADMIN: "admin",
+} as const;
+
+
+// ============================================================
+//!  src/services/api.ts
+// ============================================================
+
+import axios, { AxiosError } from "axios";
+
+// Create axios instance with withCredentials: true so the browser
+// automatically sends the HTTP-only JWT cookie on every request.
+// The JWT is NEVER accessed from JavaScript – the cookie is opaque to the frontend.
+const api = axios.create({
+  baseURL: process.env.NEXT_PUBLIC_API_URL,
+  withCredentials: true,
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
+
+// Response interceptor: on 401, clear auth state and redirect to /login.
+// The redirect is done via window.location to avoid needing the router here.
+api.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (
+      error.response?.status === 401 &&
+      typeof window !== "undefined" &&
+      !window.location.pathname.startsWith("/login") &&
+      !window.location.pathname.startsWith("/register")
+    ) {
+      // Dispatch a custom event so AuthContext can clear the user state
+      window.dispatchEvent(new Event("auth:unauthorized"));
+      window.location.href = "/login";
+    }
+    return Promise.reject(error);
+  }
+);
+
+/** Extract the error message from an Axios error, falling back to a default. */
+export function getErrorMessage(error: unknown, fallback = "Something went wrong"): string {
+  if (axios.isAxiosError(error)) {
+    return (error.response?.data as { message?: string })?.message ?? fallback;
+  }
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
+
+export default api;
+
+
+// ============================================================
+//!  src/services/auth.service.ts
+// ============================================================
+
+import api from "./api";
+import { LoginPayload, RegisterPayload } from "@/types/auth";
+import { User } from "@/types/user";
+
+export const authService = {
+  async register(payload: RegisterPayload): Promise<void> {
+    await api.post("/auth/register", payload);
+  },
+
+  async login(payload: LoginPayload): Promise<User> {
+    const res = await api.post<{ success: boolean; data: User }>("/auth/login", payload);
+    return res.data.data;
+  },
+
+  async logout(): Promise<void> {
+    await api.post("/auth/logout");
+  },
+
+  async getCurrentUser(): Promise<User> {
+    const res = await api.get<{ success: boolean; data: User }>("/users/me");
+    return res.data.data;
+  },
+};
+
+
+// ============================================================
+//!  src/services/user.service.ts
+// ============================================================
+
+import api from "./api";
+import { User, UpdateProfilePayload, ChangePasswordPayload } from "@/types/user";
+
+export const userService = {
+  async getMe(): Promise<User> {
+    const res = await api.get<{ success: boolean; data: User }>("/users/me");
+    return res.data.data;
+  },
+
+  async updateProfile(payload: UpdateProfilePayload): Promise<User> {
+    const res = await api.patch<{ success: boolean; data: User }>("/users/me", payload);
+    return res.data.data;
+  },
+
+  async changePassword(payload: ChangePasswordPayload): Promise<void> {
+    await api.patch("/users/change-password", payload);
+  },
+};
+
+
+// ============================================================
+//!  src/services/blog.service.ts
+// ============================================================
+
+import api from "./api";
+import { Blog, CreateBlogPayload, UpdateBlogPayload } from "@/types/blog";
+
+export const blogService = {
+  async getBlogs(): Promise<Blog[]> {
+    const res = await api.get<{ success: boolean; data: Blog[] }>("/blogs");
+    return res.data.data;
+  },
+
+  async getBlogById(id: string): Promise<Blog> {
+    const res = await api.get<{ success: boolean; data: Blog }>(`/blogs/${id}`);
+    return res.data.data;
+  },
+
+  async createBlog(payload: CreateBlogPayload): Promise<Blog> {
+    // Do NOT send author – the backend sets it from the authenticated cookie session.
+    const res = await api.post<{ success: boolean; data: Blog }>("/blogs", payload);
+    return res.data.data;
+  },
+
+  async updateBlog(id: string, payload: UpdateBlogPayload): Promise<Blog> {
+    const res = await api.patch<{ success: boolean; data: Blog }>(`/blogs/${id}`, payload);
+    return res.data.data;
+  },
+
+  async deleteBlog(id: string): Promise<void> {
+    await api.delete(`/blogs/${id}`);
+  },
+};
+
+
+// ============================================================
+//!  src/services/admin.service.ts
+// ============================================================
+
+import api from "./api";
+import { User } from "@/types/user";
+
+export interface AdminStats {
+  totalUsers: number;
+  totalBlogs: number;
+  adminUsers: number;
+  normalUsers: number;
+}
+
+export const adminService = {
+  async getUsers(): Promise<User[]> {
+    const res = await api.get<{ success: boolean; data: User[] }>("/admin/users");
+    return res.data.data;
+  },
+
+  async getUserById(id: string): Promise<User> {
+    const res = await api.get<{ success: boolean; data: User }>(`/admin/users/${id}`);
+    return res.data.data;
+  },
+
+  async changeUserRole(id: string, role: "user" | "admin"): Promise<User> {
+    const res = await api.patch<{ success: boolean; data: User }>(
+      `/admin/users/${id}/role`,
+      { role }
+    );
+    return res.data.data;
+  },
+
+  async deleteUser(id: string): Promise<void> {
+    await api.delete(`/admin/users/${id}`);
+  },
+};
+
+
+// ============================================================
+//!  src/validation/auth.validation.ts
+// ============================================================
+
+import * as Yup from "yup";
+
+export const loginSchema = Yup.object({
+  email: Yup.string()
+    .email("Invalid email address")
+    .required("Email is required"),
+  password: Yup.string().required("Password is required"),
+});
+
+export const registerSchema = Yup.object({
+  name: Yup.string()
+    .min(2, "Name must be at least 2 characters")
+    .required("Name is required"),
+  email: Yup.string()
+    .email("Invalid email address")
+    .required("Email is required"),
+  password: Yup.string()
+    .min(8, "Password must be at least 8 characters")
+    .required("Password is required"),
+  confirmPassword: Yup.string()
+    .oneOf([Yup.ref("password")], "Passwords must match")
+    .required("Please confirm your password"),
+  profileImage: Yup.string()
+    .url("Must be a valid URL")
+    .optional(),
+});
+
+
+// ============================================================
+//!  src/validation/user.validation.ts
+// ============================================================
+
+import * as Yup from "yup";
+
+export const updateProfileSchema = Yup.object({
+  name: Yup.string()
+    .min(2, "Name must be at least 2 characters")
+    .required("Name is required"),
+  email: Yup.string()
+    .email("Invalid email address")
+    .required("Email is required"),
+  profileImage: Yup.string()
+    .url("Must be a valid URL")
+    .optional(),
+});
+
+export const changePasswordSchema = Yup.object({
+  oldPassword: Yup.string().required("Current password is required"),
+  newPassword: Yup.string()
+    .min(8, "New password must be at least 8 characters")
+    .required("New password is required"),
+  confirmPassword: Yup.string()
+    .oneOf([Yup.ref("newPassword")], "Passwords must match")
+    .required("Please confirm your new password"),
+});
+
+
+// ============================================================
+//!  src/validation/blog.validation.ts
+// ============================================================
+
+import * as Yup from "yup";
+
+export const blogSchema = Yup.object({
+  title: Yup.string()
+    .min(3, "Title must be at least 3 characters")
+    .required("Title is required"),
+  content: Yup.string()
+    .min(10, "Content must be at least 10 characters")
+    .required("Content is required"),
+  image: Yup.string()
+    .url("Must be a valid URL")
+    .optional(),
+});
+
+
+// ============================================================
+//!  src/context/AuthContext.tsx
+// ============================================================
+
+"use client";
+
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import { User } from "@/types/user";
+import { authService } from "@/services/auth.service";
+import { LoginPayload } from "@/types/auth";
+
+interface AuthContextValue {
+  user: User | null;
+  loading: boolean;
+  isAuthenticated: boolean;
+  login: (payload: LoginPayload) => Promise<void>;
+  logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // On mount, try to restore the session by hitting GET /users/me.
+  // The browser automatically sends the HTTP-only cookie; we never read it.
+  const refreshUser = useCallback(async () => {
+    try {
+      const me = await authService.getCurrentUser();
+      setUser(me);
+    } catch {
+      // 401 → not authenticated; keep user as null
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshUser();
+  }, [refreshUser]);
+
+  // Listen for the custom event dispatched by the Axios 401 interceptor
+  useEffect(() => {
+    const handle = () => setUser(null);
+    window.addEventListener("auth:unauthorized", handle);
+    return () => window.removeEventListener("auth:unauthorized", handle);
+  }, []);
+
+  const login = useCallback(
+    async (payload: LoginPayload) => {
+      const loggedInUser = await authService.login(payload);
+      setUser(loggedInUser);
+    },
+    []
+  );
+
+  const logout = useCallback(async () => {
+    await authService.logout();
+    setUser(null);
+  }, []);
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        isAuthenticated: !!user,
+        login,
+        logout,
+        refreshUser,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuthContext(): AuthContextValue {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuthContext must be used inside <AuthProvider>");
+  return ctx;
+}
+
+
+// ============================================================
+//!  src/hooks/useAuth.ts
+// ============================================================
+
+// Convenience re-export so consumers can just do:  import { useAuth } from "@/hooks/useAuth"
+export { useAuthContext as useAuth } from "@/context/AuthContext";
+
+
+// ============================================================
+//!  src/components/common/Button.tsx
+// ============================================================
+
+import React from "react";
+
+type Variant = "primary" | "secondary" | "danger" | "ghost";
+type Size = "sm" | "md" | "lg";
+
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: Variant;
+  size?: Size;
+  loading?: boolean;
+  fullWidth?: boolean;
+}
+
+const variantClasses: Record<Variant, string> = {
+  primary:
+    "bg-indigo-600 text-white hover:bg-indigo-700 focus:ring-indigo-500 disabled:bg-indigo-400",
+  secondary:
+    "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 focus:ring-indigo-500 disabled:bg-gray-100",
+  danger:
+    "bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 disabled:bg-red-400",
+  ghost:
+    "bg-transparent text-indigo-600 hover:bg-indigo-50 focus:ring-indigo-500 disabled:text-indigo-300",
+};
+
+const sizeClasses: Record<Size, string> = {
+  sm: "px-3 py-1.5 text-sm",
+  md: "px-4 py-2 text-sm",
+  lg: "px-6 py-3 text-base",
+};
+
+export default function Button({
+  variant = "primary",
+  size = "md",
+  loading = false,
+  fullWidth = false,
+  children,
+  className = "",
+  disabled,
+  ...props
+}: ButtonProps) {
+  return (
+    <button
+      disabled={disabled || loading}
+      className={[
+        "inline-flex items-center justify-center gap-2 rounded-lg font-medium",
+        "focus:outline-none focus:ring-2 focus:ring-offset-2",
+        "transition-colors duration-150 cursor-pointer",
+        "disabled:cursor-not-allowed",
+        variantClasses[variant],
+        sizeClasses[size],
+        fullWidth ? "w-full" : "",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      {...props}
+    >
+      {loading && (
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+      )}
+      {children}
+    </button>
+  );
+}
+
+
+// ============================================================
+//!  src/components/common/Input.tsx
+// ============================================================
+
+import React from "react";
+
+interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  label?: string;
+  error?: string;
+  touched?: boolean;
+}
+
+export default function Input({
+  label,
+  error,
+  touched,
+  id,
+  className = "",
+  ...props
+}: InputProps) {
+  const showError = touched && error;
+
+  return (
+    <div className="flex flex-col gap-1">
+      {label && (
+        <label
+          htmlFor={id}
+          className="text-sm font-medium text-gray-700"
+        >
+          {label}
+        </label>
+      )}
+      <input
+        id={id}
+        className={[
+          "block w-full rounded-lg border px-3 py-2 text-sm shadow-sm",
+          "placeholder:text-gray-400",
+          "focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500",
+          "transition-colors duration-150",
+          showError
+            ? "border-red-400 bg-red-50 focus:ring-red-400 focus:border-red-400"
+            : "border-gray-300 bg-white",
+          className,
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        {...props}
+      />
+      {showError && (
+        <p className="text-xs text-red-600 mt-0.5">{error}</p>
+      )}
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/components/common/Modal.tsx
+// ============================================================
+
+"use client";
+
+import React, { useEffect } from "react";
+import Button from "./Button";
+
+interface ModalProps {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: "danger" | "primary";
+  loading?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+export default function Modal({
+  isOpen,
+  title,
+  message,
+  confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
+  variant = "danger",
+  loading = false,
+  onConfirm,
+  onCancel,
+}: ModalProps) {
+  // Close on Escape key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handle = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", handle);
+    return () => window.removeEventListener("keydown", handle);
+  }, [isOpen, onCancel]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+        onClick={onCancel}
+      />
+      {/* Panel */}
+      <div className="relative z-10 w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+        <h2 id="modal-title" className="text-lg font-semibold text-gray-900">
+          {title}
+        </h2>
+        <p className="mt-2 text-sm text-gray-600">{message}</p>
+        <div className="mt-6 flex justify-end gap-3">
+          <Button variant="secondary" onClick={onCancel} disabled={loading}>
+            {cancelLabel}
+          </Button>
+          <Button variant={variant} onClick={onConfirm} loading={loading}>
+            {confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/components/common/Loader.tsx
+// ============================================================
+
+interface LoaderProps {
+  text?: string;
+  fullPage?: boolean;
+}
+
+export default function Loader({ text = "Loading...", fullPage = false }: LoaderProps) {
+  if (fullPage) {
+    return (
+      <div className="fixed inset-0 z-40 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm">
+        <span className="h-10 w-10 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+        {text && <p className="mt-4 text-sm text-gray-600">{text}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center py-16 gap-4">
+      <span className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+      {text && <p className="text-sm text-gray-500">{text}</p>}
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/components/common/ErrorMessage.tsx
+// ============================================================
+
+interface ErrorMessageProps {
+  message: string | null | undefined;
+}
+
+export default function ErrorMessage({ message }: ErrorMessageProps) {
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+    >
+      {message}
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/components/common/EmptyState.tsx
+// ============================================================
+
+import Link from "next/link";
+import Button from "./Button";
+
+interface EmptyStateProps {
+  title: string;
+  description?: string;
+  actionLabel?: string;
+  actionHref?: string;
+}
+
+export default function EmptyState({
+  title,
+  description,
+  actionLabel,
+  actionHref,
+}: EmptyStateProps) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 text-center px-4">
+      <div className="mb-4 text-5xl">📭</div>
+      <h3 className="text-lg font-semibold text-gray-800">{title}</h3>
+      {description && (
+        <p className="mt-2 text-sm text-gray-500 max-w-xs">{description}</p>
+      )}
+      {actionLabel && actionHref && (
+        <Link href={actionHref} className="mt-6">
+          <Button>{actionLabel}</Button>
+        </Link>
+      )}
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/components/layout/Navbar.tsx
+// ============================================================
+
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import { useRouter, usePathname } from "next/navigation";
+import { useAuth } from "@/hooks/useAuth";
+import { ROUTES, DEFAULT_AVATAR } from "@/utils/constants";
+import { getErrorMessage } from "@/services/api";
+
+export default function Navbar() {
+  const { user, isAuthenticated, logout } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    try {
+      setLoggingOut(true);
+      await logout();
+      router.push(ROUTES.LOGIN);
+    } catch (err) {
+      console.error(getErrorMessage(err));
+    } finally {
+      setLoggingOut(false);
+    }
+  };
+
+  const isActive = (href: string) =>
+    pathname === href
+      ? "text-indigo-600 font-semibold"
+      : "text-gray-600 hover:text-indigo-600";
+
+  const avatarSrc = user?.profileImage || `${DEFAULT_AVATAR}&name=${encodeURIComponent(user?.name ?? "U")}`;
+
+  return (
+    <header className="sticky top-0 z-30 w-full border-b border-gray-200 bg-white/95 backdrop-blur-sm">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+        {/* Logo */}
+        <Link href={ROUTES.HOME} className="flex items-center gap-2">
+          <span className="text-xl font-bold text-indigo-600">BlogApp</span>
+        </Link>
+
+        {/* Desktop nav */}
+        <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
+          <Link href={ROUTES.HOME} className={isActive(ROUTES.HOME)}>Home</Link>
+          <Link href={ROUTES.BLOGS} className={isActive(ROUTES.BLOGS)}>Blogs</Link>
+
+          {isAuthenticated && (
+            <Link href={ROUTES.BLOG_CREATE} className={isActive(ROUTES.BLOG_CREATE)}>
+              Create Blog
+            </Link>
+          )}
+
+          {user?.role === "admin" && (
+            <Link href={ROUTES.ADMIN} className={isActive(ROUTES.ADMIN)}>
+              Admin
+            </Link>
+          )}
+        </nav>
+
+        {/* Desktop right section */}
+        <div className="hidden md:flex items-center gap-4">
+          {isAuthenticated ? (
+            <>
+              <Link href={ROUTES.PROFILE} className="flex items-center gap-2 group">
+                <div className="relative h-8 w-8 overflow-hidden rounded-full ring-2 ring-indigo-100 group-hover:ring-indigo-400 transition-all">
+                  <Image
+                    src={avatarSrc}
+                    alt={user?.name ?? "Profile"}
+                    fill
+                    sizes="32px"
+                    className="object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src =
+                        `${DEFAULT_AVATAR}&name=${encodeURIComponent(user?.name ?? "U")}`;
+                    }}
+                  />
+                </div>
+                <span className="text-sm font-medium text-gray-700 group-hover:text-indigo-600">
+                  {user?.name}
+                </span>
+              </Link>
+              <button
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:border-red-400 hover:text-red-600 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {loggingOut ? "Logging out…" : "Logout"}
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href={ROUTES.LOGIN}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:text-indigo-600 transition-colors"
+              >
+                Login
+              </Link>
+              <Link
+                href={ROUTES.REGISTER}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors"
+              >
+                Register
+              </Link>
+            </>
+          )}
+        </div>
+
+        {/* Mobile hamburger */}
+        <button
+          className="md:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+          onClick={() => setMobileOpen((o) => !o)}
+          aria-label="Toggle menu"
+        >
+          {mobileOpen ? (
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          ) : (
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          )}
+        </button>
+      </div>
+
+      {/* Mobile menu */}
+      {mobileOpen && (
+        <div className="md:hidden border-t border-gray-100 bg-white px-4 pb-4 pt-2">
+          <nav className="flex flex-col gap-1 text-sm font-medium">
+            <MobileLink href={ROUTES.HOME} label="Home" active={pathname === ROUTES.HOME} onClick={() => setMobileOpen(false)} />
+            <MobileLink href={ROUTES.BLOGS} label="Blogs" active={pathname === ROUTES.BLOGS} onClick={() => setMobileOpen(false)} />
+
+            {isAuthenticated && (
+              <MobileLink href={ROUTES.BLOG_CREATE} label="Create Blog" active={pathname === ROUTES.BLOG_CREATE} onClick={() => setMobileOpen(false)} />
+            )}
+
+            {user?.role === "admin" && (
+              <MobileLink href={ROUTES.ADMIN} label="Admin Dashboard" active={pathname === ROUTES.ADMIN} onClick={() => setMobileOpen(false)} />
+            )}
+
+            {isAuthenticated ? (
+              <>
+                <MobileLink href={ROUTES.PROFILE} label="Profile" active={pathname === ROUTES.PROFILE} onClick={() => setMobileOpen(false)} />
+                <button
+                  onClick={() => { setMobileOpen(false); handleLogout(); }}
+                  className="mt-2 w-full rounded-lg border border-red-300 py-2 text-center text-sm text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  Logout
+                </button>
+              </>
+            ) : (
+              <div className="mt-2 flex flex-col gap-2">
+                <Link
+                  href={ROUTES.LOGIN}
+                  onClick={() => setMobileOpen(false)}
+                  className="rounded-lg border border-gray-300 py-2 text-center text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  Login
+                </Link>
+                <Link
+                  href={ROUTES.REGISTER}
+                  onClick={() => setMobileOpen(false)}
+                  className="rounded-lg bg-indigo-600 py-2 text-center text-sm text-white hover:bg-indigo-700 transition-colors"
+                >
+                  Register
+                </Link>
+              </div>
+            )}
+          </nav>
+        </div>
+      )}
+    </header>
+  );
+}
+
+function MobileLink({
+  href,
+  label,
+  active,
+  onClick,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      className={`rounded-lg px-3 py-2 transition-colors ${
+        active ? "bg-indigo-50 text-indigo-600 font-semibold" : "text-gray-700 hover:bg-gray-50"
+      }`}
+    >
+      {label}
+    </Link>
+  );
+}
+
+
+// ============================================================
+//!  src/components/layout/Footer.tsx
+// ============================================================
+
+import Link from "next/link";
+import { ROUTES } from "@/utils/constants";
+
+export default function Footer() {
+  const year = new Date().getFullYear();
+  return (
+    <footer className="mt-auto border-t border-gray-200 bg-white">
+      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
+          <Link href={ROUTES.HOME} className="text-lg font-bold text-indigo-600">
+            BlogApp
+          </Link>
+          <nav className="flex gap-6 text-sm text-gray-500">
+            <Link href={ROUTES.HOME} className="hover:text-indigo-600 transition-colors">Home</Link>
+            <Link href={ROUTES.BLOGS} className="hover:text-indigo-600 transition-colors">Blogs</Link>
+            <Link href={ROUTES.LOGIN} className="hover:text-indigo-600 transition-colors">Login</Link>
+            <Link href={ROUTES.REGISTER} className="hover:text-indigo-600 transition-colors">Register</Link>
+          </nav>
+          <p className="text-sm text-gray-400">&copy; {year} BlogApp. All rights reserved.</p>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+
+// ============================================================
+//!  src/components/layout/Sidebar.tsx
+// ============================================================
+
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { ROUTES } from "@/utils/constants";
+
+const adminLinks = [
+  { href: ROUTES.ADMIN, label: "Dashboard", icon: "📊" },
+  { href: ROUTES.ADMIN_USERS, label: "Manage Users", icon: "👥" },
+  { href: ROUTES.BLOGS, label: "All Blogs", icon: "📝" },
+];
+
+export default function AdminSidebar() {
+  const pathname = usePathname();
+
+  return (
+    <aside className="w-56 shrink-0">
+      <nav className="flex flex-col gap-1">
+        {adminLinks.map((link) => {
+          const active =
+            link.href === ROUTES.ADMIN
+              ? pathname === ROUTES.ADMIN
+              : pathname.startsWith(link.href);
+          return (
+            <Link
+              key={link.href}
+              href={link.href}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                active
+                  ? "bg-indigo-50 text-indigo-700"
+                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+              }`}
+            >
+              <span>{link.icon}</span>
+              {link.label}
+            </Link>
+          );
+        })}
+      </nav>
+    </aside>
+  );
+}
+
+
+// ============================================================
+//!  src/components/auth/ProtectedRoute.tsx
+// ============================================================
+
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/hooks/useAuth";
+import { ROUTES } from "@/utils/constants";
+import Loader from "@/components/common/Loader";
+
+interface ProtectedRouteProps {
+  children: React.ReactNode;
+}
+
+/**
+ * Wraps pages that require an authenticated user.
+ * While the session check is in-flight it shows a loader.
+ * Once resolved, unauthenticated visitors are redirected to /login.
+ * The actual authorization is enforced by the backend; this guard
+ * is only for navigation UX.
+ */
+export default function ProtectedRoute({ children }: ProtectedRouteProps) {
+  const { isAuthenticated, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !isAuthenticated) {
+      router.replace(ROUTES.LOGIN);
+    }
+  }, [loading, isAuthenticated, router]);
+
+  if (loading) return <Loader fullPage text="Checking session…" />;
+  if (!isAuthenticated) return null;
+
+  return <>{children}</>;
+}
+
+
+// ============================================================
+//!  src/components/auth/AdminRoute.tsx
+// ============================================================
+
+"use client";
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/hooks/useAuth";
+import { ROUTES } from "@/utils/constants";
+import Loader from "@/components/common/Loader";
+
+interface AdminRouteProps {
+  children: React.ReactNode;
+}
+
+/**
+ * Wraps pages that require an admin role.
+ * Redirects unauthenticated users to /login and non-admins to /unauthorized.
+ * The backend also enforces checkAdmin middleware – this guard is UI-only.
+ */
+export default function AdminRoute({ children }: AdminRouteProps) {
+  const { user, loading, isAuthenticated } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (loading) return;
+    if (!isAuthenticated) {
+      router.replace(ROUTES.LOGIN);
+    } else if (user?.role !== "admin") {
+      router.replace(ROUTES.UNAUTHORIZED);
+    }
+  }, [loading, isAuthenticated, user, router]);
+
+  if (loading) return <Loader fullPage text="Checking permissions…" />;
+  if (!isAuthenticated || user?.role !== "admin") return null;
+
+  return <>{children}</>;
+}
+
+
+// ============================================================
+//!  src/components/blog/BlogCard.tsx
+// ============================================================
+
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { Blog } from "@/types/blog";
+import { useAuth } from "@/hooks/useAuth";
+import { blogService } from "@/services/blog.service";
+import { getErrorMessage } from "@/services/api";
+import { ROUTES, DEFAULT_AVATAR, DEFAULT_BLOG_IMAGE } from "@/utils/constants";
+import Modal from "@/components/common/Modal";
+
+interface BlogCardProps {
+  blog: Blog;
+  onDeleted?: (id: string) => void;
+}
+
+export default function BlogCard({ blog, onDeleted }: BlogCardProps) {
+  const { user } = useAuth();
+  const router = useRouter();
+  const [showModal, setShowModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const canEdit =
+    user && (user._id === blog.author?._id || user.role === "admin");
+
+  const handleDelete = async () => {
+    try {
+      setDeleting(true);
+      await blogService.deleteBlog(blog._id);
+      setShowModal(false);
+      onDeleted?.(blog._id);
+    } catch (err) {
+      console.error(getErrorMessage(err));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const authorAvatar =
+    blog.author?.profileImage ||
+    `${DEFAULT_AVATAR}&name=${encodeURIComponent(blog.author?.name ?? "A")}`;
+
+  const blogImage = blog.image || DEFAULT_BLOG_IMAGE;
+
+  return (
+    <>
+      <article className="group flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow duration-200">
+        {/* Cover image */}
+        <Link href={ROUTES.BLOG_DETAIL(blog._id)} className="relative block h-48 overflow-hidden bg-gray-100">
+          <Image
+            src={blogImage}
+            alt={blog.title}
+            fill
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+            className="object-cover transition-transform duration-300 group-hover:scale-105"
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = DEFAULT_BLOG_IMAGE;
+            }}
+          />
+        </Link>
+
+        {/* Body */}
+        <div className="flex flex-1 flex-col p-5">
+          <Link href={ROUTES.BLOG_DETAIL(blog._id)}>
+            <h2 className="text-base font-semibold text-gray-900 line-clamp-2 hover:text-indigo-600 transition-colors">
+              {blog.title}
+            </h2>
+          </Link>
+          <p className="mt-2 text-sm text-gray-500 line-clamp-3">{blog.content}</p>
+
+          {/* Author row */}
+          <div className="mt-4 flex items-center gap-2">
+            <div className="relative h-7 w-7 shrink-0 overflow-hidden rounded-full">
+              <Image
+                src={authorAvatar}
+                alt={blog.author?.name ?? "Author"}
+                fill
+                sizes="28px"
+                className="object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src =
+                    `${DEFAULT_AVATAR}&name=${encodeURIComponent(blog.author?.name ?? "A")}`;
+                }}
+              />
+            </div>
+            <span className="text-xs font-medium text-gray-600">{blog.author?.name}</span>
+            <span className="ml-auto text-xs text-gray-400">
+              {new Date(blog.createdAt).toLocaleDateString()}
+            </span>
+          </div>
+
+          {/* Actions */}
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <Link
+              href={ROUTES.BLOG_DETAIL(blog._id)}
+              className="text-sm font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+            >
+              Read more →
+            </Link>
+            {canEdit && (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => router.push(ROUTES.BLOG_EDIT(blog._id))}
+                  className="rounded-md px-3 py-1 text-xs font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-colors cursor-pointer"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => setShowModal(true)}
+                  className="rounded-md px-3 py-1 text-xs font-medium text-red-600 border border-red-200 hover:bg-red-50 transition-colors cursor-pointer"
+                >
+                  Delete
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </article>
+
+      <Modal
+        isOpen={showModal}
+        title="Delete Blog"
+        message={`Are you sure you want to delete "${blog.title}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        loading={deleting}
+        onConfirm={handleDelete}
+        onCancel={() => setShowModal(false)}
+      />
+    </>
+  );
+}
+
+
+// ============================================================
+//!  src/components/blog/BlogForm.tsx
+// ============================================================
+
+"use client";
+
+import { useFormik } from "formik";
+import { blogSchema } from "@/validation/blog.validation";
+import { CreateBlogPayload } from "@/types/blog";
+import Input from "@/components/common/Input";
+import Button from "@/components/common/Button";
+import ErrorMessage from "@/components/common/ErrorMessage";
+
+interface BlogFormProps {
+  initialValues?: CreateBlogPayload;
+  onSubmit: (values: CreateBlogPayload) => Promise<void>;
+  submitLabel?: string;
+  error?: string | null;
+}
+
+const defaultValues: CreateBlogPayload = {
+  title: "",
+  content: "",
+  image: "",
+};
+
+export default function BlogForm({
+  initialValues = defaultValues,
+  onSubmit,
+  submitLabel = "Publish Blog",
+  error,
+}: BlogFormProps) {
+  const formik = useFormik<CreateBlogPayload>({
+    initialValues,
+    validationSchema: blogSchema,
+    enableReinitialize: true,
+    onSubmit: async (values) => {
+      // Strip empty image string so backend receives undefined rather than ""
+      const payload: CreateBlogPayload = {
+        title: values.title,
+        content: values.content,
+        ...(values.image ? { image: values.image } : {}),
+      };
+      await onSubmit(payload);
+    },
+  });
+
+  return (
+    <form onSubmit={formik.handleSubmit} noValidate className="flex flex-col gap-5">
+      <ErrorMessage message={error} />
+
+      <Input
+        id="title"
+        label="Title"
+        placeholder="Enter blog title"
+        {...formik.getFieldProps("title")}
+        error={formik.errors.title}
+        touched={formik.touched.title}
+      />
+
+      <div className="flex flex-col gap-1">
+        <label htmlFor="content" className="text-sm font-medium text-gray-700">
+          Content
+        </label>
+        <textarea
+          id="content"
+          rows={8}
+          placeholder="Write your blog content here…"
+          {...formik.getFieldProps("content")}
+          className={[
+            "block w-full rounded-lg border px-3 py-2 text-sm shadow-sm",
+            "placeholder:text-gray-400 resize-y",
+            "focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500",
+            "transition-colors duration-150",
+            formik.touched.content && formik.errors.content
+              ? "border-red-400 bg-red-50"
+              : "border-gray-300 bg-white",
+          ].join(" ")}
+        />
+        {formik.touched.content && formik.errors.content && (
+          <p className="text-xs text-red-600">{formik.errors.content}</p>
+        )}
+      </div>
+
+      <Input
+        id="image"
+        label="Image URL (optional)"
+        placeholder="https://example.com/image.jpg"
+        {...formik.getFieldProps("image")}
+        error={formik.errors.image}
+        touched={formik.touched.image}
+      />
+
+      <Button
+        type="submit"
+        fullWidth
+        loading={formik.isSubmitting}
+        disabled={formik.isSubmitting}
+      >
+        {submitLabel}
+      </Button>
+    </form>
+  );
+}
+
+
+// ============================================================
+//!  src/components/blog/BlogList.tsx
+// ============================================================
+
+"use client";
+
+import { useState } from "react";
+import { Blog } from "@/types/blog";
+import BlogCard from "./BlogCard";
+import EmptyState from "@/components/common/EmptyState";
+import { ROUTES } from "@/utils/constants";
+
+interface BlogListProps {
+  initialBlogs: Blog[];
+}
+
+export default function BlogList({ initialBlogs }: BlogListProps) {
+  const [blogs, setBlogs] = useState<Blog[]>(initialBlogs);
+
+  const handleDeleted = (id: string) => {
+    setBlogs((prev) => prev.filter((b) => b._id !== id));
+  };
+
+  if (blogs.length === 0) {
+    return (
+      <EmptyState
+        title="No blogs found"
+        description="Be the first to share something great!"
+        actionLabel="Create Blog"
+        actionHref={ROUTES.BLOG_CREATE}
+      />
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {blogs.map((blog) => (
+        <BlogCard key={blog._id} blog={blog} onDeleted={handleDeleted} />
+      ))}
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/app/globals.css
+// ============================================================
+
+@import "tailwindcss";
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply min-h-screen flex flex-col bg-gray-50 text-gray-900;
+}
+
+/* Line clamp utilities (fallback for older browsers) */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+
+// ============================================================
+//!  src/app/layout.tsx
+// ============================================================
+
+import type { Metadata } from "next";
+import "./globals.css";
+import { AuthProvider } from "@/context/AuthContext";
+import Navbar from "@/components/layout/Navbar";
+import Footer from "@/components/layout/Footer";
+
+export const metadata: Metadata = {
+  title: { default: "BlogApp", template: "%s | BlogApp" },
+  description: "A modern blogging platform built with Next.js and Node.js",
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body className="min-h-screen flex flex-col bg-gray-50">
+        <AuthProvider>
+          <Navbar />
+          <main className="flex-1">{children}</main>
+          <Footer />
+        </AuthProvider>
+      </body>
+    </html>
+  );
+}
+
+
+// ============================================================
+//!  src/app/page.tsx
+// ============================================================
+
+import Link from "next/link";
+import Image from "next/image";
+import { blogService } from "@/services/blog.service";
+import { ROUTES, DEFAULT_BLOG_IMAGE, DEFAULT_AVATAR } from "@/utils/constants";
+import { Blog } from "@/types/blog";
+
+async function getLatestBlogs(): Promise<Blog[]> {
+  try {
+    const blogs = await blogService.getBlogs();
+    return blogs.slice(0, 3);
+  } catch {
+    return [];
+  }
+}
+
+export default async function HomePage() {
+  const latestBlogs = await getLatestBlogs();
+
+  return (
+    <div className="flex flex-col">
+      {/* Hero */}
+      <section className="relative overflow-hidden bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800 px-4 py-24 text-white sm:py-32">
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute -top-40 -right-40 h-96 w-96 rounded-full bg-white/20 blur-3xl" />
+          <div className="absolute -bottom-40 -left-40 h-96 w-96 rounded-full bg-white/20 blur-3xl" />
+        </div>
+        <div className="relative mx-auto max-w-4xl text-center">
+          <span className="inline-block rounded-full bg-white/20 px-4 py-1.5 text-sm font-medium backdrop-blur-sm mb-6">
+            Welcome to BlogApp
+          </span>
+          <h1 className="text-4xl font-bold tracking-tight sm:text-6xl">
+            Share Your Ideas With{" "}
+            <span className="text-yellow-300">The World</span>
+          </h1>
+          <p className="mt-6 text-lg text-indigo-100 max-w-2xl mx-auto leading-relaxed">
+            A modern platform where writers share stories, knowledge, and
+            perspectives. Create, discover, and engage with blogs that matter.
+          </p>
+          <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
+            <Link
+              href={ROUTES.REGISTER}
+              className="w-full sm:w-auto rounded-xl bg-white px-8 py-3.5 text-sm font-semibold text-indigo-700 shadow-lg hover:bg-indigo-50 transition-colors"
+            >
+              Get started — it's free
+            </Link>
+            <Link
+              href={ROUTES.BLOGS}
+              className="w-full sm:w-auto rounded-xl border border-white/40 px-8 py-3.5 text-sm font-semibold text-white backdrop-blur-sm hover:bg-white/10 transition-colors"
+            >
+              Browse blogs →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Features */}
+      <section className="bg-white px-4 py-20">
+        <div className="mx-auto max-w-6xl">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-bold text-gray-900">
+              Everything you need to blog
+            </h2>
+            <p className="mt-3 text-gray-500">
+              Simple, powerful tools for writers and readers alike.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
+            {features.map((f) => (
+              <div
+                key={f.title}
+                className="rounded-xl border border-gray-100 bg-gray-50 p-6 hover:border-indigo-200 hover:bg-indigo-50/50 transition-colors"
+              >
+                <div className="mb-4 text-3xl">{f.icon}</div>
+                <h3 className="font-semibold text-gray-900">{f.title}</h3>
+                <p className="mt-2 text-sm text-gray-500">{f.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Latest Blogs */}
+      {latestBlogs.length > 0 && (
+        <section className="bg-gray-50 px-4 py-20">
+          <div className="mx-auto max-w-6xl">
+            <div className="flex items-center justify-between mb-10">
+              <div>
+                <h2 className="text-3xl font-bold text-gray-900">Latest Blogs</h2>
+                <p className="mt-1 text-gray-500">Fresh perspectives from our writers</p>
+              </div>
+              <Link
+                href={ROUTES.BLOGS}
+                className="hidden sm:inline-flex text-sm font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+              >
+                View all →
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {latestBlogs.map((blog) => (
+                <HomeBlogCard key={blog._id} blog={blog} />
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* CTA */}
+      <section className="bg-indigo-600 px-4 py-20 text-white">
+        <div className="mx-auto max-w-3xl text-center">
+          <h2 className="text-3xl font-bold">Ready to start writing?</h2>
+          <p className="mt-4 text-indigo-100">
+            Join thousands of writers and share your story today.
+          </p>
+          <div className="mt-8 flex flex-col sm:flex-row justify-center gap-4">
+            <Link
+              href={ROUTES.REGISTER}
+              className="rounded-xl bg-white px-8 py-3.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 transition-colors"
+            >
+              Create an account
+            </Link>
+            <Link
+              href={ROUTES.LOGIN}
+              className="rounded-xl border border-white/40 px-8 py-3.5 text-sm font-semibold text-white hover:bg-white/10 transition-colors"
+            >
+              Sign in
+            </Link>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function HomeBlogCard({ blog }: { blog: Blog }) {
+  const blogImage = blog.image || DEFAULT_BLOG_IMAGE;
+  const authorAvatar =
+    blog.author?.profileImage ||
+    `${DEFAULT_AVATAR}&name=${encodeURIComponent(blog.author?.name ?? "A")}`;
+
+  return (
+    <Link
+      href={ROUTES.BLOG_DETAIL(blog._id)}
+      className="group flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm hover:shadow-md transition-shadow"
+    >
+      <div className="relative h-44 overflow-hidden bg-gray-100">
+        <Image
+          src={blogImage}
+          alt={blog.title}
+          fill
+          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+          className="object-cover transition-transform duration-300 group-hover:scale-105"
+        />
+      </div>
+      <div className="flex flex-1 flex-col p-5">
+        <h3 className="font-semibold text-gray-900 line-clamp-2 group-hover:text-indigo-600 transition-colors">
+          {blog.title}
+        </h3>
+        <p className="mt-2 text-sm text-gray-500 line-clamp-2">{blog.content}</p>
+        <div className="mt-4 flex items-center gap-2">
+          <div className="relative h-6 w-6 overflow-hidden rounded-full shrink-0">
+            <Image src={authorAvatar} alt={blog.author?.name ?? "Author"} fill sizes="24px" className="object-cover" />
+          </div>
+          <span className="text-xs text-gray-600">{blog.author?.name}</span>
+          <span className="ml-auto text-xs text-gray-400">
+            {new Date(blog.createdAt).toLocaleDateString()}
+          </span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+const features = [
+  { icon: "✍️", title: "Write & Publish", description: "Create beautiful blogs with a simple editor and publish them instantly to the world." },
+  { icon: "🔐", title: "Secure Authentication", description: "Your account is protected with secure HTTP-only cookie authentication." },
+  { icon: "👤", title: "Manage Your Profile", description: "Personalise your profile with an avatar and keep your information up to date." },
+  { icon: "📸", title: "Rich Blog Images", description: "Add cover images to make your blogs visually compelling and engaging." },
+  { icon: "🛡️", title: "Admin Controls", description: "Admins can manage all users and blogs, keeping the platform safe and clean." },
+  { icon: "📱", title: "Fully Responsive", description: "A seamless reading and writing experience on any device — mobile, tablet, or desktop." },
+];
+
+
+// ============================================================
+//!  src/app/login/page.tsx
+// ============================================================
+
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useFormik } from "formik";
+import { useAuth } from "@/hooks/useAuth";
+import { loginSchema } from "@/validation/auth.validation";
+import { getErrorMessage } from "@/services/api";
+import { ROUTES } from "@/utils/constants";
+import Input from "@/components/common/Input";
+import Button from "@/components/common/Button";
+import ErrorMessage from "@/components/common/ErrorMessage";
+
+export default function LoginPage() {
+  const { login, isAuthenticated, loading, user } = useAuth();
+  const router = useRouter();
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!loading && isAuthenticated) {
+      router.replace(user?.role === "admin" ? ROUTES.ADMIN : ROUTES.BLOGS);
+    }
+  }, [loading, isAuthenticated, user, router]);
+
+  const formik = useFormik({
+    initialValues: { email: "", password: "" },
+    validationSchema: loginSchema,
+    onSubmit: async (values) => {
+      setApiError(null);
+      try {
+        await login(values);
+      } catch (err) {
+        setApiError(getErrorMessage(err, "Invalid email or password"));
+      }
+    },
+  });
+
+  if (loading || isAuthenticated) return null;
+
+  return (
+    <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center bg-gray-50 px-4 py-12">
+      <div className="w-full max-w-md">
+        <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+          <div className="mb-8 text-center">
+            <h1 className="text-2xl font-bold text-gray-900">Welcome back</h1>
+            <p className="mt-2 text-sm text-gray-500">Sign in to your BlogApp account</p>
+          </div>
+
+          <form onSubmit={formik.handleSubmit} noValidate className="flex flex-col gap-5">
+            <ErrorMessage message={apiError} />
+
+            <Input
+              id="email"
+              type="email"
+              label="Email address"
+              placeholder="you@example.com"
+              autoComplete="email"
+              {...formik.getFieldProps("email")}
+              error={formik.errors.email}
+              touched={formik.touched.email}
+            />
+
+            <Input
+              id="password"
+              type="password"
+              label="Password"
+              placeholder="Enter your password"
+              autoComplete="current-password"
+              {...formik.getFieldProps("password")}
+              error={formik.errors.password}
+              touched={formik.touched.password}
+            />
+
+            <Button type="submit" fullWidth size="lg" loading={formik.isSubmitting} disabled={formik.isSubmitting} className="mt-2">
+              Sign in
+            </Button>
+          </form>
+
+          <p className="mt-6 text-center text-sm text-gray-500">
+            Don't have an account?{" "}
+            <Link href={ROUTES.REGISTER} className="font-medium text-indigo-600 hover:text-indigo-800 transition-colors">
+              Create one
+            </Link>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/app/register/page.tsx
+// ============================================================
+
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useFormik } from "formik";
+import { useAuth } from "@/hooks/useAuth";
+import { registerSchema } from "@/validation/auth.validation";
+import { authService } from "@/services/auth.service";
+import { getErrorMessage } from "@/services/api";
+import { ROUTES } from "@/utils/constants";
+import Input from "@/components/common/Input";
+import Button from "@/components/common/Button";
+import ErrorMessage from "@/components/common/ErrorMessage";
+
+export default function RegisterPage() {
+  const { isAuthenticated, loading } = useAuth();
+  const router = useRouter();
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    if (!loading && isAuthenticated) router.replace(ROUTES.BLOGS);
+  }, [loading, isAuthenticated, router]);
+
+  const formik = useFormik({
+    initialValues: { name: "", email: "", password: "", confirmPassword: "", profileImage: "" },
+    validationSchema: registerSchema,
+    onSubmit: async (values) => {
+      setApiError(null);
+      try {
+        await authService.register({
+          name: values.name,
+          email: values.email,
+          password: values.password,
+          ...(values.profileImage ? { profileImage: values.profileImage } : {}),
+        });
+        setSuccess(true);
+        setTimeout(() => router.push(ROUTES.LOGIN), 2000);
+      } catch (err) {
+        setApiError(getErrorMessage(err, "Registration failed. Please try again."));
+      }
+    },
+  });
+
+  if (loading || isAuthenticated) return null;
+
+  return (
+    <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center bg-gray-50 px-4 py-12">
+      <div className="w-full max-w-md">
+        <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+          <div className="mb-8 text-center">
+            <h1 className="text-2xl font-bold text-gray-900">Create an account</h1>
+            <p className="mt-2 text-sm text-gray-500">Join BlogApp and start writing today</p>
+          </div>
+
+          {success ? (
+            <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-center text-sm text-green-700">
+              Account created! Redirecting to login…
+            </div>
+          ) : (
+            <form onSubmit={formik.handleSubmit} noValidate className="flex flex-col gap-5">
+              <ErrorMessage message={apiError} />
+              <Input id="name" label="Full name" placeholder="John Doe" autoComplete="name"
+                {...formik.getFieldProps("name")} error={formik.errors.name} touched={formik.touched.name} />
+              <Input id="email" type="email" label="Email address" placeholder="you@example.com" autoComplete="email"
+                {...formik.getFieldProps("email")} error={formik.errors.email} touched={formik.touched.email} />
+              <Input id="password" type="password" label="Password" placeholder="Min. 8 characters" autoComplete="new-password"
+                {...formik.getFieldProps("password")} error={formik.errors.password} touched={formik.touched.password} />
+              <Input id="confirmPassword" type="password" label="Confirm password" placeholder="Repeat your password" autoComplete="new-password"
+                {...formik.getFieldProps("confirmPassword")} error={formik.errors.confirmPassword} touched={formik.touched.confirmPassword} />
+              <Input id="profileImage" label="Profile image URL (optional)" placeholder="https://example.com/avatar.jpg"
+                {...formik.getFieldProps("profileImage")} error={formik.errors.profileImage} touched={formik.touched.profileImage} />
+              <Button type="submit" fullWidth size="lg" loading={formik.isSubmitting} disabled={formik.isSubmitting} className="mt-2">
+                Create account
+              </Button>
+            </form>
+          )}
+
+          <p className="mt-6 text-center text-sm text-gray-500">
+            Already have an account?{" "}
+            <Link href={ROUTES.LOGIN} className="font-medium text-indigo-600 hover:text-indigo-800 transition-colors">Sign in</Link>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/app/blogs/page.tsx
+// ============================================================
+
+import { Metadata } from "next";
+import { blogService } from "@/services/blog.service";
+import BlogList from "@/components/blog/BlogList";
+import { Blog } from "@/types/blog";
+
+export const metadata: Metadata = { title: "Blogs" };
+
+async function getBlogs(): Promise<Blog[]> {
+  try {
+    return await blogService.getBlogs();
+  } catch {
+    return [];
+  }
+}
+
+export default async function BlogsPage() {
+  const blogs = await getBlogs();
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900">All Blogs</h1>
+        <p className="mt-2 text-gray-500">Discover stories, ideas, and perspectives from our community.</p>
+      </div>
+      <BlogList initialBlogs={blogs} />
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/app/blogs/[id]/page.tsx
+// ============================================================
+
+import { Metadata } from "next";
+import Image from "next/image";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { blogService } from "@/services/blog.service";
+import { ROUTES, DEFAULT_BLOG_IMAGE, DEFAULT_AVATAR } from "@/utils/constants";
+
+interface Props {
+  params: Promise<{ id: string }>;
+}
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  try {
+    const { id } = await params;
+    const blog = await blogService.getBlogById(id);
+    return { title: blog.title };
+  } catch {
+    return { title: "Blog" };
+  }
+}
+
+export default async function BlogDetailPage({ params }: Props) {
+  const { id } = await params;
+  let blog;
+  try {
+    blog = await blogService.getBlogById(id);
+  } catch {
+    notFound();
+  }
+
+  const blogImage = blog.image || DEFAULT_BLOG_IMAGE;
+  const authorAvatar =
+    blog.author?.profileImage ||
+    `${DEFAULT_AVATAR}&name=${encodeURIComponent(blog.author?.name ?? "A")}`;
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 lg:px-8">
+      <Link href={ROUTES.BLOGS} className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-indigo-600 transition-colors mb-6">
+        ← Back to blogs
+      </Link>
+
+      <div className="relative h-64 w-full overflow-hidden rounded-2xl bg-gray-100 sm:h-80">
+        <Image src={blogImage} alt={blog.title} fill sizes="(max-width: 768px) 100vw, 768px" className="object-cover" preload={true} />
+      </div>
+
+      <div className="mt-8">
+        <h1 className="text-3xl font-bold text-gray-900 sm:text-4xl leading-tight">{blog.title}</h1>
+
+        <div className="mt-6 flex items-center gap-3 border-y border-gray-100 py-4">
+          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full">
+            <Image src={authorAvatar} alt={blog.author?.name ?? "Author"} fill sizes="40px" className="object-cover" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-900">{blog.author?.name}</p>
+            <p className="text-xs text-gray-500">{blog.author?.email}</p>
+          </div>
+          <div className="ml-auto text-right">
+            <p className="text-xs text-gray-400">
+              Published {new Date(blog.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+            </p>
+            {blog.updatedAt !== blog.createdAt && (
+              <p className="text-xs text-gray-400">
+                Updated {new Date(blog.updatedAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-8">
+        <p className="text-base text-gray-700 leading-relaxed whitespace-pre-wrap">{blog.content}</p>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/app/blogs/create/page.tsx
+// ============================================================
+
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/hooks/useAuth";
+import { blogService } from "@/services/blog.service";
+import { getErrorMessage } from "@/services/api";
+import { ROUTES } from "@/utils/constants";
+import { CreateBlogPayload } from "@/types/blog";
+import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import BlogForm from "@/components/blog/BlogForm";
+
+function CreateBlogContent() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (values: CreateBlogPayload) => {
+    setError(null);
+    try {
+      // Do NOT include author — backend sets it from the authenticated cookie
+      const blog = await blogService.createBlog(values);
+      router.push(ROUTES.BLOG_DETAIL(blog._id));
+    } catch (err) {
+      setError(getErrorMessage(err, "Failed to create blog. Please try again."));
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900">Create a Blog</h1>
+        <p className="mt-2 text-gray-500">
+          Writing as <span className="font-medium text-indigo-600">{user?.name}</span>
+        </p>
+      </div>
+      <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+        <BlogForm onSubmit={handleSubmit} submitLabel="Publish Blog" error={error} />
+      </div>
+    </div>
+  );
+}
+
+export default function CreateBlogPage() {
+  return (
+    <ProtectedRoute>
+      <CreateBlogContent />
+    </ProtectedRoute>
+  );
+}
+
+
+// ============================================================
+//!  src/app/blogs/edit/[id]/page.tsx
+// ============================================================
+
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter, useParams } from "next/navigation";
+import { useAuth } from "@/hooks/useAuth";
+import { blogService } from "@/services/blog.service";
+import { getErrorMessage } from "@/services/api";
+import { ROUTES } from "@/utils/constants";
+import { Blog, CreateBlogPayload } from "@/types/blog";
+import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import BlogForm from "@/components/blog/BlogForm";
+import Loader from "@/components/common/Loader";
+import ErrorMessage from "@/components/common/ErrorMessage";
+
+function EditBlogContent() {
+  const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const { user } = useAuth();
+  const [blog, setBlog] = useState<Blog | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const data = await blogService.getBlogById(params.id);
+        if (user && data.author._id !== user._id && user.role !== "admin") {
+          router.replace(ROUTES.UNAUTHORIZED);
+          return;
+        }
+        setBlog(data);
+      } catch (err) {
+        const msg = getErrorMessage(err);
+        if (msg.toLowerCase().includes("403") || msg.toLowerCase().includes("unauthorized")) {
+          router.replace(ROUTES.UNAUTHORIZED);
+        } else {
+          setLoadError(msg);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (user !== undefined) load();
+  }, [params.id, user, router]);
+
+  const handleSubmit = async (values: CreateBlogPayload) => {
+    setSubmitError(null);
+    try {
+      await blogService.updateBlog(params.id, values);
+      router.push(ROUTES.BLOG_DETAIL(params.id));
+    } catch (err) {
+      const msg = getErrorMessage(err, "Failed to update blog.");
+      if (msg.toLowerCase().includes("403")) {
+        router.replace(ROUTES.UNAUTHORIZED);
+      } else {
+        setSubmitError(msg);
+      }
+    }
+  };
+
+  if (loading) return <Loader text="Loading blog…" />;
+  if (loadError) return <div className="mx-auto max-w-2xl px-4 py-10"><ErrorMessage message={loadError} /></div>;
+  if (!blog) return null;
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900">Edit Blog</h1>
+        <p className="mt-2 text-sm text-gray-500">Update your blog post below.</p>
+      </div>
+      <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+        <BlogForm
+          initialValues={{ title: blog.title, content: blog.content, image: blog.image ?? "" }}
+          onSubmit={handleSubmit}
+          submitLabel="Save Changes"
+          error={submitError}
+        />
+      </div>
+    </div>
+  );
+}
+
+export default function EditBlogPage() {
+  return (
+    <ProtectedRoute>
+      <EditBlogContent />
+    </ProtectedRoute>
+  );
+}
+
+
+// ============================================================
+//!  src/app/profile/page.tsx
+// ============================================================
+
+"use client";
+
+import Image from "next/image";
+import Link from "next/link";
+import { useAuth } from "@/hooks/useAuth";
+import { ROUTES, DEFAULT_AVATAR } from "@/utils/constants";
+import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import Button from "@/components/common/Button";
+
+function ProfileContent() {
+  const { user } = useAuth();
+  if (!user) return null;
+
+  const avatar = user.profileImage || `${DEFAULT_AVATAR}&name=${encodeURIComponent(user.name)}`;
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 lg:px-8">
+      <h1 className="text-3xl font-bold text-gray-900 mb-8">My Profile</h1>
+      <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+        <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+          <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-full ring-4 ring-indigo-100">
+            <Image src={avatar} alt={user.name} fill sizes="96px" className="object-cover"
+              onError={(e) => { (e.target as HTMLImageElement).src = `${DEFAULT_AVATAR}&name=${encodeURIComponent(user.name)}`; }} />
+          </div>
+          <div className="text-center sm:text-left">
+            <h2 className="text-xl font-bold text-gray-900">{user.name}</h2>
+            <p className="text-gray-500">{user.email}</p>
+            <span className={`mt-2 inline-block rounded-full px-3 py-0.5 text-xs font-semibold ${
+              user.role === "admin" ? "bg-purple-100 text-purple-700" : "bg-indigo-100 text-indigo-700"
+            }`}>
+              {user.role === "admin" ? "Administrator" : "User"}
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {[
+            { label: "Full Name", value: user.name },
+            { label: "Email", value: user.email },
+            { label: "Role", value: user.role },
+            { label: "Member Since", value: new Date(user.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) },
+          ].map((f) => (
+            <div key={f.label} className="rounded-lg bg-gray-50 p-4">
+              <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">{f.label}</p>
+              <p className="mt-1 font-medium text-gray-900 capitalize">{f.value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+          <Link href={ROUTES.PROFILE_EDIT} className="flex-1">
+            <Button variant="primary" fullWidth>Edit Profile</Button>
+          </Link>
+          <Link href={ROUTES.PROFILE_CHANGE_PASSWORD} className="flex-1">
+            <Button variant="secondary" fullWidth>Change Password</Button>
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function ProfilePage() {
+  return <ProtectedRoute><ProfileContent /></ProtectedRoute>;
+}
+
+
+// ============================================================
+//!  src/app/profile/edit/page.tsx
+// ============================================================
+
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useFormik } from "formik";
+import { useAuth } from "@/hooks/useAuth";
+import { userService } from "@/services/user.service";
+import { getErrorMessage } from "@/services/api";
+import { updateProfileSchema } from "@/validation/user.validation";
+import { ROUTES } from "@/utils/constants";
+import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import Input from "@/components/common/Input";
+import Button from "@/components/common/Button";
+import ErrorMessage from "@/components/common/ErrorMessage";
+
+function EditProfileContent() {
+  const { user, refreshUser } = useAuth();
+  const router = useRouter();
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const formik = useFormik({
+    initialValues: { name: user?.name ?? "", email: user?.email ?? "", profileImage: user?.profileImage ?? "" },
+    validationSchema: updateProfileSchema,
+    enableReinitialize: true,
+    onSubmit: async (values) => {
+      setApiError(null);
+      try {
+        await userService.updateProfile({
+          name: values.name,
+          email: values.email,
+          ...(values.profileImage ? { profileImage: values.profileImage } : {}),
+        });
+        await refreshUser();
+        setSuccess(true);
+        setTimeout(() => router.push(ROUTES.PROFILE), 1500);
+      } catch (err) {
+        setApiError(getErrorMessage(err, "Failed to update profile."));
+      }
+    },
+  });
+
+  return (
+    <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mb-8 flex items-center gap-4">
+        <Link href={ROUTES.PROFILE} className="text-sm text-gray-500 hover:text-indigo-600 transition-colors">← Back to profile</Link>
+        <h1 className="text-3xl font-bold text-gray-900">Edit Profile</h1>
+      </div>
+      <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+        {success && <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700">Profile updated! Redirecting…</div>}
+        <form onSubmit={formik.handleSubmit} noValidate className="flex flex-col gap-5">
+          <ErrorMessage message={apiError} />
+          <Input id="name" label="Full name" placeholder="John Doe"
+            {...formik.getFieldProps("name")} error={formik.errors.name} touched={formik.touched.name} />
+          <Input id="email" type="email" label="Email address" placeholder="you@example.com"
+            {...formik.getFieldProps("email")} error={formik.errors.email} touched={formik.touched.email} />
+          <Input id="profileImage" label="Profile image URL (optional)" placeholder="https://example.com/avatar.jpg"
+            {...formik.getFieldProps("profileImage")} error={formik.errors.profileImage} touched={formik.touched.profileImage} />
+          <div className="flex flex-col gap-3 sm:flex-row pt-2">
+            <Button type="submit" fullWidth loading={formik.isSubmitting} disabled={formik.isSubmitting}>Save Changes</Button>
+            <Link href={ROUTES.PROFILE} className="flex-1">
+              <Button variant="secondary" fullWidth type="button">Cancel</Button>
+            </Link>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+export default function EditProfilePage() {
+  return <ProtectedRoute><EditProfileContent /></ProtectedRoute>;
+}
+
+
+// ============================================================
+//!  src/app/profile/change-password/page.tsx
+// ============================================================
+
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useFormik } from "formik";
+import { userService } from "@/services/user.service";
+import { getErrorMessage } from "@/services/api";
+import { changePasswordSchema } from "@/validation/user.validation";
+import { ROUTES } from "@/utils/constants";
+import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import Input from "@/components/common/Input";
+import Button from "@/components/common/Button";
+import ErrorMessage from "@/components/common/ErrorMessage";
+
+function ChangePasswordContent() {
+  const router = useRouter();
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  const formik = useFormik({
+    initialValues: { oldPassword: "", newPassword: "", confirmPassword: "" },
+    validationSchema: changePasswordSchema,
+    onSubmit: async (values) => {
+      setApiError(null);
+      try {
+        await userService.changePassword({ oldPassword: values.oldPassword, newPassword: values.newPassword });
+        setSuccess(true);
+        setTimeout(() => router.push(ROUTES.PROFILE), 2000);
+      } catch (err) {
+        setApiError(getErrorMessage(err, "Failed to change password. Check your current password."));
+      }
+    },
+  });
+
+  return (
+    <div className="mx-auto max-w-lg px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mb-8 flex items-center gap-4">
+        <Link href={ROUTES.PROFILE} className="text-sm text-gray-500 hover:text-indigo-600 transition-colors">← Back to profile</Link>
+        <h1 className="text-3xl font-bold text-gray-900">Change Password</h1>
+      </div>
+      <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+        {success ? (
+          <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-700 text-center">
+            Password changed! Redirecting…
+          </div>
+        ) : (
+          <form onSubmit={formik.handleSubmit} noValidate className="flex flex-col gap-5">
+            <ErrorMessage message={apiError} />
+            <Input id="oldPassword" type="password" label="Current password" placeholder="Enter your current password"
+              autoComplete="current-password" {...formik.getFieldProps("oldPassword")} error={formik.errors.oldPassword} touched={formik.touched.oldPassword} />
+            <Input id="newPassword" type="password" label="New password" placeholder="Min. 8 characters"
+              autoComplete="new-password" {...formik.getFieldProps("newPassword")} error={formik.errors.newPassword} touched={formik.touched.newPassword} />
+            <Input id="confirmPassword" type="password" label="Confirm new password" placeholder="Repeat new password"
+              autoComplete="new-password" {...formik.getFieldProps("confirmPassword")} error={formik.errors.confirmPassword} touched={formik.touched.confirmPassword} />
+            <div className="flex flex-col gap-3 sm:flex-row pt-2">
+              <Button type="submit" fullWidth loading={formik.isSubmitting} disabled={formik.isSubmitting}>Change Password</Button>
+              <Link href={ROUTES.PROFILE} className="flex-1">
+                <Button variant="secondary" fullWidth type="button">Cancel</Button>
+              </Link>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default function ChangePasswordPage() {
+  return <ProtectedRoute><ChangePasswordContent /></ProtectedRoute>;
+}
+
+
+// ============================================================
+//!  src/app/admin/page.tsx
+// ============================================================
+
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { adminService } from "@/services/admin.service";
+import { blogService } from "@/services/blog.service";
+import { getErrorMessage } from "@/services/api";
+import { ROUTES } from "@/utils/constants";
+import AdminRoute from "@/components/auth/AdminRoute";
+import AdminSidebar from "@/components/layout/Sidebar";
+import Loader from "@/components/common/Loader";
+import ErrorMessage from "@/components/common/ErrorMessage";
+
+interface Stats { totalUsers: number; totalBlogs: number; adminUsers: number; normalUsers: number; }
+
+function AdminDashboardContent() {
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [users, blogs] = await Promise.all([adminService.getUsers(), blogService.getBlogs()]);
+        setStats({
+          totalUsers: users.length,
+          totalBlogs: blogs.length,
+          adminUsers: users.filter((u) => u.role === "admin").length,
+          normalUsers: users.filter((u) => u.role === "user").length,
+        });
+      } catch (err) {
+        setError(getErrorMessage(err, "Failed to load dashboard data."));
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  if (loading) return <Loader text="Loading dashboard…" />;
+
+  const cards = stats ? [
+    { label: "Total Users", value: stats.totalUsers, icon: "👥", color: "bg-blue-50 border-blue-200 text-blue-700" },
+    { label: "Total Blogs", value: stats.totalBlogs, icon: "📝", color: "bg-indigo-50 border-indigo-200 text-indigo-700" },
+    { label: "Admin Users", value: stats.adminUsers, icon: "🛡️", color: "bg-purple-50 border-purple-200 text-purple-700" },
+    { label: "Regular Users", value: stats.normalUsers, icon: "🙋", color: "bg-green-50 border-green-200 text-green-700" },
+  ] : [];
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
+        <p className="mt-2 text-gray-500">Overview of your platform.</p>
+      </div>
+      <div className="flex gap-8">
+        <AdminSidebar />
+        <div className="flex-1 min-w-0">
+          <ErrorMessage message={error} />
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+            {cards.map((card) => (
+              <div key={card.label} className={`rounded-xl border p-6 ${card.color}`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-3xl">{card.icon}</span>
+                  <span className="text-3xl font-bold">{card.value}</span>
+                </div>
+                <p className="mt-3 text-sm font-medium">{card.label}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <Link href={ROUTES.ADMIN_USERS} className="group rounded-xl border border-gray-200 bg-white p-6 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all">
+              <div className="text-2xl mb-3">👥</div>
+              <h3 className="font-semibold text-gray-900 group-hover:text-indigo-600">Manage Users</h3>
+              <p className="mt-1 text-sm text-gray-500">View, edit roles, and delete users.</p>
+            </Link>
+            <Link href={ROUTES.BLOGS} className="group rounded-xl border border-gray-200 bg-white p-6 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all">
+              <div className="text-2xl mb-3">📝</div>
+              <h3 className="font-semibold text-gray-900 group-hover:text-indigo-600">Manage Blogs</h3>
+              <p className="mt-1 text-sm text-gray-500">View, edit, and delete any blog post.</p>
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function AdminDashboardPage() {
+  return <AdminRoute><AdminDashboardContent /></AdminRoute>;
+}
+
+
+// ============================================================
+//!  src/app/admin/users/page.tsx
+// ============================================================
+
+"use client";
+
+import { useEffect, useState } from "react";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { adminService } from "@/services/admin.service";
+import { getErrorMessage } from "@/services/api";
+import { User } from "@/types/user";
+import { ROUTES, DEFAULT_AVATAR } from "@/utils/constants";
+import AdminRoute from "@/components/auth/AdminRoute";
+import AdminSidebar from "@/components/layout/Sidebar";
+import Loader from "@/components/common/Loader";
+import ErrorMessage from "@/components/common/ErrorMessage";
+import Modal from "@/components/common/Modal";
+import Button from "@/components/common/Button";
+
+function AdminUsersContent() {
+  const router = useRouter();
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [roleTarget, setRoleTarget] = useState<User | null>(null);
+  const [newRole, setNewRole] = useState<"user" | "admin">("user");
+  const [changingRole, setChangingRole] = useState(false);
+
+  const loadUsers = async () => {
+    try {
+      setLoading(true);
+      const data = await adminService.getUsers();
+      setUsers(data);
+    } catch (err) {
+      setError(getErrorMessage(err, "Failed to load users."));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadUsers(); }, []);
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      setDeleting(true);
+      await adminService.deleteUser(deleteTarget._id);
+      setUsers((prev) => prev.filter((u) => u._id !== deleteTarget._id));
+      setDeleteTarget(null);
+    } catch (err) {
+      setError(getErrorMessage(err, "Failed to delete user."));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleRoleChange = async () => {
+    if (!roleTarget) return;
+    try {
+      setChangingRole(true);
+      await adminService.changeUserRole(roleTarget._id, newRole);
+      setUsers((prev) => prev.map((u) => (u._id === roleTarget._id ? { ...u, role: newRole } : u)));
+      setRoleTarget(null);
+    } catch (err) {
+      setError(getErrorMessage(err, "Failed to change role."));
+    } finally {
+      setChangingRole(false);
+    }
+  };
+
+  if (loading) return <Loader text="Loading users…" />;
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900">Manage Users</h1>
+        <p className="mt-2 text-gray-500">{users.length} total users</p>
+      </div>
+      <div className="flex gap-8">
+        <AdminSidebar />
+        <div className="flex-1 min-w-0">
+          <ErrorMessage message={error} />
+          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  {["User", "Email", "Role", "Joined", "Actions"].map((h) => (
+                    <th key={h} className="whitespace-nowrap px-4 py-3.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {users.map((u) => {
+                  const avatar = u.profileImage || `${DEFAULT_AVATAR}&name=${encodeURIComponent(u.name)}`;
+                  return (
+                    <tr key={u._id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-full">
+                            <Image src={avatar} alt={u.name} fill sizes="32px" className="object-cover" />
+                          </div>
+                          <span className="font-medium text-gray-900 whitespace-nowrap">{u.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{u.email}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${u.role === "admin" ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-600"}`}>
+                          {u.role}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{new Date(u.createdAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => router.push(ROUTES.ADMIN_USER_DETAIL(u._id))} className="rounded px-2.5 py-1 text-xs font-medium text-indigo-600 border border-indigo-200 hover:bg-indigo-50 transition-colors cursor-pointer">View</button>
+                          <button onClick={() => { setRoleTarget(u); setNewRole(u.role === "admin" ? "user" : "admin"); }} className="rounded px-2.5 py-1 text-xs font-medium text-amber-600 border border-amber-200 hover:bg-amber-50 transition-colors cursor-pointer">Role</button>
+                          <button onClick={() => setDeleteTarget(u)} className="rounded px-2.5 py-1 text-xs font-medium text-red-600 border border-red-200 hover:bg-red-50 transition-colors cursor-pointer">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {users.length === 0 && <div className="py-16 text-center text-gray-400">No users found.</div>}
+          </div>
+        </div>
+      </div>
+
+      <Modal isOpen={!!deleteTarget} title="Delete User"
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This cannot be undone.`}
+        confirmLabel="Delete" variant="danger" loading={deleting}
+        onConfirm={handleDelete} onCancel={() => setDeleteTarget(null)} />
+
+      {roleTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setRoleTarget(null)} />
+          <div className="relative z-10 w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl">
+            <h2 className="text-lg font-semibold text-gray-900">Change Role</h2>
+            <p className="mt-2 text-sm text-gray-600">Change role for <strong>{roleTarget.name}</strong></p>
+            <div className="mt-4">
+              <label className="text-sm font-medium text-gray-700">New Role</label>
+              <select value={newRole} onChange={(e) => setNewRole(e.target.value as "user" | "admin")}
+                className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <Button variant="secondary" onClick={() => setRoleTarget(null)} disabled={changingRole}>Cancel</Button>
+              <Button variant="primary" onClick={handleRoleChange} loading={changingRole}>Confirm</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function AdminUsersPage() {
+  return <AdminRoute><AdminUsersContent /></AdminRoute>;
+}
+
+
+// ============================================================
+//!  src/app/admin/users/[id]/page.tsx
+// ============================================================
+
+"use client";
+
+import { useEffect, useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { adminService } from "@/services/admin.service";
+import { getErrorMessage } from "@/services/api";
+import { User } from "@/types/user";
+import { ROUTES, DEFAULT_AVATAR } from "@/utils/constants";
+import AdminRoute from "@/components/auth/AdminRoute";
+import AdminSidebar from "@/components/layout/Sidebar";
+import Loader from "@/components/common/Loader";
+import ErrorMessage from "@/components/common/ErrorMessage";
+
+function UserDetailContent() {
+  const params = useParams<{ id: string }>();
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const data = await adminService.getUserById(params.id);
+        setUser(data);
+      } catch (err) {
+        setError(getErrorMessage(err, "Failed to load user."));
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [params.id]);
+
+  if (loading) return <Loader text="Loading user…" />;
+
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mb-8 flex items-center gap-4">
+        <Link href={ROUTES.ADMIN_USERS} className="text-sm text-gray-500 hover:text-indigo-600 transition-colors">← Back to users</Link>
+        <h1 className="text-3xl font-bold text-gray-900">User Details</h1>
+      </div>
+      <div className="flex gap-8">
+        <AdminSidebar />
+        <div className="flex-1 min-w-0">
+          <ErrorMessage message={error} />
+          {user && (
+            <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm max-w-2xl">
+              <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+                <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-full ring-4 ring-indigo-100">
+                  <Image
+                    src={user.profileImage || `${DEFAULT_AVATAR}&name=${encodeURIComponent(user.name)}`}
+                    alt={user.name} fill sizes="80px" className="object-cover" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900">{user.name}</h2>
+                  <p className="text-gray-500">{user.email}</p>
+                  <span className={`mt-2 inline-block rounded-full px-3 py-0.5 text-xs font-semibold ${user.role === "admin" ? "bg-purple-100 text-purple-700" : "bg-indigo-100 text-indigo-700"}`}>
+                    {user.role === "admin" ? "Administrator" : "User"}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {[
+                  { label: "User ID", value: user._id },
+                  { label: "Role", value: user.role },
+                  { label: "Email", value: user.email },
+                  { label: "Member Since", value: new Date(user.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) },
+                  { label: "Last Updated", value: new Date(user.updatedAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) },
+                ].map((field) => (
+                  <div key={field.label} className="rounded-lg bg-gray-50 p-4">
+                    <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">{field.label}</p>
+                    <p className="mt-1 text-sm font-medium text-gray-900 break-all">{field.value}</p>
+                  </div>
+                ))}
+              </div>
+              {/* Note: password and salt are never displayed — excluded by backend */}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function AdminUserDetailPage() {
+  return <AdminRoute><UserDetailContent /></AdminRoute>;
+}
+
+
+// ============================================================
+//!  src/app/unauthorized/page.tsx
+// ============================================================
+
+import Link from "next/link";
+import { Metadata } from "next";
+import { ROUTES } from "@/utils/constants";
+
+export const metadata: Metadata = { title: "Unauthorized" };
+
+export default function UnauthorizedPage() {
+  return (
+    <div className="flex min-h-[calc(100vh-8rem)] flex-col items-center justify-center px-4 text-center">
+      <div className="text-6xl mb-6">🔒</div>
+      <h1 className="text-4xl font-bold text-gray-900">Access Denied</h1>
+      <p className="mt-4 text-gray-500 max-w-sm">
+        You don't have permission to view this page. If you think this is a mistake, contact an administrator.
+      </p>
+      <div className="mt-8 flex flex-col sm:flex-row gap-4">
+        <Link href={ROUTES.HOME} className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors">Go Home</Link>
+        <Link href={ROUTES.BLOGS} className="rounded-xl border border-gray-300 px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">Browse Blogs</Link>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+//!  src/app/not-found.tsx
+// ============================================================
+
+import Link from "next/link";
+import { ROUTES } from "@/utils/constants";
+
+export default function NotFound() {
+  return (
+    <div className="flex min-h-[calc(100vh-8rem)] flex-col items-center justify-center px-4 text-center">
+      <div className="text-7xl font-bold text-indigo-100 select-none">404</div>
+      <h1 className="mt-2 text-3xl font-bold text-gray-900">Page not found</h1>
+      <p className="mt-4 text-gray-500 max-w-sm">
+        The page you're looking for doesn't exist or has been moved.
+      </p>
+      <div className="mt-8 flex flex-col sm:flex-row gap-4">
+        <Link href={ROUTES.HOME} className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors">Go Home</Link>
+        <Link href={ROUTES.BLOGS} className="rounded-xl border border-gray-300 px-6 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors">Browse Blogs</Link>
+      </div>
+    </div>
+  );
+}
+
+
+================================================================================
+  END OF FILE — Total files: 35
+  Run:  npm run dev  (backend must be running on port 5000)
+================================================================================
