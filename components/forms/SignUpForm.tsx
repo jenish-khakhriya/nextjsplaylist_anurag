@@ -3,9 +3,13 @@
 import { Formik, Form, ErrorMessage } from "formik";
 import * as Yup from "yup";
 import FormField from "../common/FormField";
-import handleAxios from "@/services/api";
+
 import { toast } from "react-toastify";
 import { useState } from "react";
+import { createClientApi } from "@/services/api";
+import { getSignupType } from "@/types/auth";
+import { useRouter } from "next/navigation";
+import { static_url, url } from "@/constant/api";
 
 interface SignUpValues {
   username: string;
@@ -118,8 +122,9 @@ const validationSchema = Yup.object({
 
 const SignUpForm = () => {
   const [loading, setLoading] = useState(false);
+    const {push} = useRouter();
   const handleSubmit = async (values: SignUpValues) => {
-
+  
     const formData = new FormData();
 
     formData.append("username", values.username);
@@ -164,17 +169,27 @@ const SignUpForm = () => {
       values.address.city
     );
 
+    // formData.append(
+    //   "expireSecond",
+    //   540
+    // );
+
     // Example API request
     try {
       setLoading(true);
-      const api = await handleAxios();
+      const api = await createClientApi();
 
-      const response = await api.post(
-        "/api/auth/signup",
+      const response : getSignupType = await api.post(
+        url.REGISTER,
         formData
       );
-      console.log(response);
-      toast.success("its success")
+      if(!response?.success){
+        throw new Error("something went wrong");
+      }
+
+      toast.success(response?.message);
+      push(static_url.LOGIN);
+      // if(response)
     }
     catch (err) {
       if (err instanceof Error)

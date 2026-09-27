@@ -3,20 +3,21 @@ import { NextResponse } from "next/server";
 export async function POST(req: Request) {
   try {
     const { token = "", refreshToken = "" } = await req.json();
+    
     const response = NextResponse.json({
       message: "Cookies set successfully",
       success: true,
     });
-
-    response.cookies.set("accessToken", token, {
+    console.log(process.env.NEXT_TOKEN,"process.env.NEXT_TOKEN",token,"token",refreshToken,"refreshToken");
+    response.cookies.set(process.env.NEXT_TOKEN ?? "accessToken", token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: 15 * 60, // 15 minutes
     });
 
-    response.cookies.set("refreshToken", refreshToken, {
+
+    response.cookies.set(process.env.NEXT_REFRESH_TOKEN ?? "refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",

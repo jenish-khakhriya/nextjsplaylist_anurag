@@ -1,19 +1,30 @@
+"use client";
+
 import Link from "next/link";
 import Image from "next/image";
-import { HeaderProps } from "@/types/user";
+import { static_url } from "@/constant/api";
+import { useAuth } from "@/hook/useAuth";
+import { useMemo } from "react";
+import HeaderShimmer from "../skeleton/HeaderShimmer";
 
 
 
-const Header = ({ user }: HeaderProps) => {
-  const isAdmin = user?.role?.includes("admin");
+const Header = () => {
 
+  const {profile : user,loading} = useAuth();
+
+  const isAdmin = useMemo(() => user?.role.includes("admin"),[user]);
+
+ 
+  if(loading)
+    return <HeaderShimmer/>
   return (
     <header className="sticky top-0 z-50 w-full border-b border-zinc-800 bg-black text-white">
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
 
         {/* Logo */}
         <Link
-          href="/"
+          href={static_url.HOME}
           className="text-2xl font-bold tracking-tight"
         >
           Chat<span className="text-blue-500">App</span>
@@ -21,18 +32,18 @@ const Header = ({ user }: HeaderProps) => {
 
         {/* Navigation */}
         <nav className="hidden items-center gap-8 md:flex">
-          {user && <Link
-            href="/"
+          <Link
+            href={static_url.DASHBOARD}
             className="text-sm text-zinc-300 hover:text-white"
           >
             Dashboard
-          </Link>}
+          </Link>
 
           
 
           {isAdmin && (
             <Link
-              href="/admin"
+              href={static_url.ADMIN_HOME}
               className="text-sm font-medium text-blue-400 hover:text-blue-300"
             >
               Admin
@@ -45,14 +56,14 @@ const Header = ({ user }: HeaderProps) => {
           <div className="flex items-center gap-3">
 
             <Link
-              href="/login"
+              href={static_url.LOGIN}
               className="rounded-lg border border-zinc-700 px-5 py-2.5 text-sm font-medium hover:bg-zinc-900"
             >
               Login
             </Link>
 
             <Link
-              href="/signup"
+              href={static_url.REGISTER}
               className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold hover:bg-blue-500"
             >
               Sign Up
@@ -69,14 +80,14 @@ const Header = ({ user }: HeaderProps) => {
 
                 {user.profileImage ? (
                   <Image
-                    src={user.profileImage}
+                    src={`${process.env.NEXT_PUBLIC_API_URL}${user.profileImage}`}
                     alt={user.username}
                     fill
                     className="object-cover"
                   />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center bg-blue-600 font-bold">
-                    {user.username.charAt(0).toUpperCase()}
+                    {user.username}
                   </div>
                 )}
 
@@ -117,7 +128,7 @@ const Header = ({ user }: HeaderProps) => {
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-blue-600 font-bold">
-                        {user.username.charAt(0).toUpperCase()}
+                        {user.username}
                       </div>
                     )}
 
@@ -141,7 +152,7 @@ const Header = ({ user }: HeaderProps) => {
               <div className="p-2">
 
                 <Link
-                  href="/profile"
+                  href={static_url.PROFILE}
                   className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-zinc-300 hover:bg-zinc-900 hover:text-white"
                 >
                   👤
@@ -149,7 +160,7 @@ const Header = ({ user }: HeaderProps) => {
                 </Link>
 
                 <Link
-                  href="/dashboard"
+                  href={static_url.DASHBOARD}
                   className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-zinc-300 hover:bg-zinc-900 hover:text-white"
                 >
                   📊
@@ -158,7 +169,7 @@ const Header = ({ user }: HeaderProps) => {
 
                 {isAdmin && (
                   <Link
-                    href="/admin"
+                    href={static_url.ADMIN_HOME}
                     className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-blue-400 hover:bg-zinc-900"
                   >
                     ⚡
@@ -167,7 +178,7 @@ const Header = ({ user }: HeaderProps) => {
                 )}
 
                 <Link
-                  href="/settings"
+                  href={static_url.SETTINGS}
                   className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-zinc-300 hover:bg-zinc-900 hover:text-white"
                 >
                   ⚙️
@@ -180,7 +191,7 @@ const Header = ({ user }: HeaderProps) => {
               <div className="border-t border-zinc-800 p-2">
 
                 <Link
-                  href="/logout"
+                  href={static_url.LOGOUT}
                   className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm text-red-400 hover:bg-red-500/10"
                 >
                   ↪

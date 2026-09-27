@@ -3,9 +3,13 @@
 import Link from "next/link";
 import { Formik, Form, Field, ErrorMessage } from "formik";
 import * as Yup from "yup";
-import handleAxios from "@/services/api";
+import { createClientApi } from "@/services/api"
 import { useState } from "react";
 import { toast } from "react-toastify";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/hook/useAuth";
+import { getLoginType } from "@/types/auth";
+import { static_url, url } from "@/constant/api";
 
 interface LoginValues {
   identifier: string;
@@ -28,37 +32,40 @@ const validationSchema = Yup.object({
 });
 
 const LoginForm = () => {
-  const [loading,setLoading] = useState(false);
+  const router = useRouter();
+  const { handleSetUser } = useAuth();
+  const [loading, setLoading] = useState(false);
   const handleSubmit = async (
     values: LoginValues
   ) => {
-    console.log("LOGIN DATA:", values);
 
-       try {
+    try {
       setLoading(true);
-      const api = await handleAxios();
+      const api = await createClientApi();
 
-      const response = await api.post(
-        "/api/auth/login",
+      const response : getLoginType = await api.post(
+        url.LOGIN,
         {
-          email : values.identifier,
-          password : values.password
+          email: values.identifier,
+          password: values.password
         }
       );
-      console.log(response.data)
-      const { token, refreshToken } = response.data;
-
-await fetch("/api/set-cookie", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    token,
-    refreshToken,
-  }),
-});
-      toast.success("its success")
+      const { token, refreshToken, message, user } = response ?? {};
+      await fetch(url.SET_COOKIE, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify  ({
+          token,
+          refreshToken,
+        }),
+      });
+      handleSetUser(user);
+      toast.success(message ?? "login success")
+      
+      router.replace(static_url.DASHBOARD);
+      router.refresh();
     }
     catch (err) {
       if (err instanceof Error)
@@ -72,8 +79,6 @@ await fetch("/api/set-cookie", {
       "/api/login",
       values
     );
-
-    console.log(response.data);
     */
   };
 
