@@ -264,18 +264,26 @@ export async function proxy(request: NextRequest) {
 
       return nextWithPathname(request);
     }
-
-
-    // ==========================================
-    // TOKEN INVALID
-    // ==========================================
-
-    return NextResponse.redirect(
+    else if (
+      pathname.split("/")[1] === "login" ||
+      pathname.split("/")[1] === "signup"
+    ) {
+      return nextWithPathname(request);
+    }
+    else{
+       return NextResponse.redirect(
       new URL(
         static_url.LOGIN,
         request.url
       )
     );
+    }
+
+    // ==========================================
+    // TOKEN INVALID
+    // ==========================================
+
+   
 
 
   } catch (err) {
@@ -290,7 +298,7 @@ export async function proxy(request: NextRequest) {
     // allow it
 
     if (
-      pathname === static_url.LOGIN
+      pathname.split("/")[1] === "login" || pathname.split("/")[1] === "signup"
     ) {
       return nextWithPathname(request);
     }
@@ -322,6 +330,8 @@ export const config = {
     "/profile/:path*",
     "/settings",
     "/settings/:path*",
+    "/manage-followers",
+    "/manage-followers/:path*",
   ],
 
 };

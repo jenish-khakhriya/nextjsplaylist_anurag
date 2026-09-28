@@ -1,5 +1,9 @@
+import Search from "@/components/Search";
+
 const DashBoard = () => {
-    return <main>Dashboard</main>
+    return <main>
+        <Search />
+    </main>
 }
 
 export default DashBoard;

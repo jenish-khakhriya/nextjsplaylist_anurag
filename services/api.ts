@@ -48,14 +48,14 @@ export const createClientApi = async () => {
       if (err?.response?.data?.message === authToken.EXPIRED) {
         console.log("enter");
         try {
-          const api = await axios.create({
+          const refreshApi = await axios.create({
             baseURL: BASE_URL,
             headers: {
               Authorization: `Bearer ${refreshToken}`,
             },
           }
           );
-          const refreshResponse = await api.get(url.REFRESH_TOKEN);
+          const refreshResponse = await refreshApi.get(url.REFRESH_TOKEN);
           console.log(refreshResponse.data,"refreshResponse.data",`http://localhost:3000${url.SET_COOKIE}`)
           //! set token in cookies again 
           if (!refreshResponse.data?.success) {
@@ -70,7 +70,7 @@ export const createClientApi = async () => {
                 "New access token was not returned"
               );
             }
-        await fetch(`http://localhost:3000${url.SET_COOKIE}`, {
+        await fetch(url.SET_COOKIE, {
         method: "POST",
         credentials: "include",
         headers: {
@@ -84,17 +84,8 @@ export const createClientApi = async () => {
           
             err.config.headers.Authorization =
               `Bearer ${newAccessToken}`;
+            api.defaults.headers.common["Authorization"] = `Bearer ${newAccessToken}`;
 
-          //   const apiRetry = await axios.create({
-          //   baseURL: BASE_URL,
-          //   headers: {
-          //     Authorization: `Bearer ${newAccessToken}`,
-          //   },
-          // }
-          // );
-
-          // return apiRetry;
-            // Retry original request
             return api(err.config);
           }
           catch (err) {
