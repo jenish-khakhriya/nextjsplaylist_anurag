@@ -14,10 +14,12 @@ const Header = () => {
   const {profile : user,loading} = useAuth();
 
   const isAdmin = useMemo(() => user?.role.includes("admin"),[user]);
-
+  
  
   if(loading)
     return <HeaderShimmer/>
+
+ 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-zinc-800 bg-black text-white">
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6">
@@ -80,7 +82,7 @@ const Header = () => {
 
                 {user.profileImage ? (
                   <Image
-                    src={`${process.env.NEXT_PUBLIC_API_URL}${user.profileImage}`}
+                    src={`${process.env.NEXT_PUBLIC_API_URL}${user?.profileImage}`}
                     alt={user.username}
                     fill
                     className="object-cover"

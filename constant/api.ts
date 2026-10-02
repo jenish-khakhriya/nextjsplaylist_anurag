@@ -1,10 +1,13 @@
 export const url = {
     ME : "/api/user/me",
+    ALL_USER : "/api/user",
+    SEARCH_USER : "/api/user/search",
     LOGIN : "/api/auth/login",
     REGISTER : "/api/auth/signup",
     SET_COOKIE : "/api/set-cookie",
     GET_COOKIE : "/api/get-cookie",
-    REFRESH_TOKEN : "/api/auth/refresh-token"
+    REFRESH_TOKEN : "/api/auth/refresh-token",
+    FOLLOW_REQUEST : "/api/follow-requests"
 }
 
 
